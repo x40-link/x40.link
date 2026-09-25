@@ -57,6 +57,7 @@ after authentication succeeds, so a failed or cancelled login leaves the existin
 After upgrading from a version that asked you to log in repeatedly, run `@ login` once to obtain a
 refresh token. The CLI then renews expired access tokens without another device login while that
 refresh token remains valid.
+If a refresh token is missing, the CLI prints a warning to stderr explaining why another login is needed.
 See [Change the CLI account](docs/content/how-to/change-cli-account.md) for the complete workflow.
 
 **Look up a short link's destination** (`@ resolve`):
