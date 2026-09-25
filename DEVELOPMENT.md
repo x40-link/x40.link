@@ -77,6 +77,12 @@ Explicit login is transactional from the CLI's perspective. `auth.Login`
 completes the device flow and serializes the returned token before calling
 the existing atomic token-storage write. Authentication, cancellation, or
 write failures therefore leave the previously cached credentials unchanged.
+The CLI requests `offline_access` alongside API permissions during device
+authorization. Auth0 requires that scope to issue a refresh token, even though
+the API already allows offline access. The cached token source saves renewed
+tokens, including rotated refresh tokens, for later CLI invocations. Users
+with tokens issued before this scope was requested need to run `@ login` once
+after upgrading.
 
 ## Public vs. Authenticated gRPC Methods
 

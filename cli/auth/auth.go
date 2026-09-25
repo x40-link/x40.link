@@ -79,7 +79,7 @@ func oauthConfig() *oauth2.Config {
 			DeviceAuthURL: viper.GetString(cfg.OAuth2DeviceAuthorizationEndpoint.Path),
 			TokenURL:      viper.GetString(cfg.OAuth2TokenURL.Path),
 		},
-		Scopes: api.X40PermissionsList(),
+		Scopes: append(api.X40PermissionsList(), "offline_access"),
 	}
 }
 

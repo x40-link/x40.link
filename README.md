@@ -54,6 +54,9 @@ before deploying this version.
 
 Always starts a fresh OAuth device authorization flow. The CLI replaces its cached credentials only
 after authentication succeeds, so a failed or cancelled login leaves the existing account available.
+After upgrading from a version that asked you to log in repeatedly, run `@ login` once to obtain a
+refresh token. The CLI then renews expired access tokens without another device login while that
+refresh token remains valid.
 See [Change the CLI account](docs/content/how-to/change-cli-account.md) for the complete workflow.
 
 **Look up a short link's destination** (`@ resolve`):
