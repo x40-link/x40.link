@@ -14,8 +14,9 @@ import (
 // ErrDependencyFailure means that, for some reason, the dependency required didn't work
 var ErrDependencyFailure = errors.New("dependency failure")
 
-// OptsFromViper reads the configuration from viper, and returns options that can bootstrap a gRPC server
-func OptsFromViper() ([]grpc.ServerOption, error) {
+// OptsFromViper reads the configuration and returns transport options and
+// the authorizer shared by native gRPC and generated HTTP gateway routes.
+func OptsFromViper() ([]grpc.ServerOption, *jwts.ServerInterceptor, error) {
 	opts := []grpc.ServerOption{}
 
 	// otelgrpc emits the parent span per RPC and provides server-side
@@ -30,7 +31,7 @@ func OptsFromViper() ([]grpc.ServerOption, error) {
 	// cfg.ErrMissingOptions
 	icept, err := jwts.WireServerInterceptor()
 	if err != nil && !errors.Is(err, cfg.ErrMissingOptions) {
-		return nil, fmt.Errorf("%w: %s", ErrDependencyFailure, err)
+		return nil, nil, fmt.Errorf("%w: %s", ErrDependencyFailure, err)
 	} else if err == nil {
 		opts = append(
 			opts,
@@ -39,5 +40,5 @@ func OptsFromViper() ([]grpc.ServerOption, error) {
 		)
 	}
 
-	return opts, nil
+	return opts, icept, nil
 }

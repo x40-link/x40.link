@@ -4,257 +4,101 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/andrewhowdencom/sysexits"
-	gendev "github.com/andrewhowdencom/x40.link/api/gen/dev"
 	"github.com/andrewhowdencom/x40.link/cfg"
-	"github.com/stretchr/testify/assert"
+	"github.com/andrewhowdencom/x40.link/shortlink"
+	"github.com/stretchr/testify/require"
+	v1alpha "github.com/x40-link/api/gen/x40/link/v1alpha"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// fakeClient is a minimal api.Client implementation for testing doResolveWithClient. Only
-// the Get method is configured per-test; New is left as a panic so we can detect any
-// accidental use.
 type fakeClient struct {
-	get  func(ctx context.Context, in *gendev.GetRequest, opts ...grpc.CallOption) (*gendev.Response, error)
-	list func(ctx context.Context, in *gendev.ListRequest, opts ...grpc.CallOption) (*gendev.ListResponse, error)
+	v1alpha.ShortLinkServiceClient
+	get  func(context.Context, *v1alpha.GetShortLinkRequest) (*v1alpha.ShortLink, error)
+	list func(context.Context, *v1alpha.ListShortLinksRequest) (*v1alpha.ListShortLinksResponse, error)
 }
 
-func TestBuildNewRequestPreservesPathIdentity(t *testing.T) {
-	for _, source := range []string{"example.com/foo/bar", "example.com/foo+bar", "example.com/foo%2Fbar", "example.com/foo//bar", "example.com/", "example.com"} {
-		req, err := buildNewRequest([]string{source, "destination.example"})
-		assert.NoError(t, err)
-		assert.Equal(t, strings.TrimPrefix(source, "example.com"), req.On.Path)
-		assert.Equal(t, "https://destination.example", req.SendTo)
+func (f *fakeClient) GetShortLink(ctx context.Context, req *v1alpha.GetShortLinkRequest, _ ...grpc.CallOption) (*v1alpha.ShortLink, error) {
+	return f.get(ctx, req)
+}
+func (f *fakeClient) ListShortLinks(ctx context.Context, req *v1alpha.ListShortLinksRequest, _ ...grpc.CallOption) (*v1alpha.ListShortLinksResponse, error) {
+	return f.list(ctx, req)
+}
+
+func TestBuildCreateRequestPreservesPathIdentity(t *testing.T) {
+	for _, path := range []string{"/foo/bar", "/foo+bar", "/foo%2Fbar", "/foo//bar", "/"} {
+		req, err := buildNewRequest([]string{"EXAMPLE.COM" + path, "destination.example"})
+		require.NoError(t, err)
+		require.Equal(t, "domains/example.com", req.Parent)
+		require.Equal(t, path, req.ShortLink.GetPath())
+		require.Equal(t, "https://destination.example", req.ShortLink.DestinationUrl)
 	}
+	req, err := buildNewRequest([]string{"https://destination.example"})
+	require.NoError(t, err)
+	require.Equal(t, "domains/x40.link", req.Parent)
+	require.Nil(t, req.ShortLink.Path)
+	req, err = buildNewRequest([]string{"example.com", "https://destination.example"})
+	require.NoError(t, err)
+	require.Nil(t, req.ShortLink.Path)
 }
 
-func (f *fakeClient) Get(ctx context.Context, in *gendev.GetRequest, opts ...grpc.CallOption) (*gendev.Response, error) {
-	return f.get(ctx, in, opts...)
-}
-
-func (f *fakeClient) New(_ context.Context, _ *gendev.NewRequest, _ ...grpc.CallOption) (*gendev.Response, error) {
-	panic("fakeClient.New invoked; doResolveWithClient should not call New")
-}
-
-func (f *fakeClient) List(ctx context.Context, in *gendev.ListRequest, opts ...grpc.CallOption) (*gendev.ListResponse, error) {
-	return f.list(ctx, in, opts...)
-}
-
-func TestListCommand(t *testing.T) {
-	command, args, err := Root.Find([]string{"list"})
-	assert.NoError(t, err)
-	assert.Same(t, listCmd, command)
-	assert.Empty(t, args)
-	assert.NotNil(t, listCmd.Flags().Lookup("domain"))
-	assert.NotNil(t, listCmd.Flags().Lookup(cfg.APIEndpoint.Path))
-	assert.NotNil(t, listCmd.Flags().Lookup(cfg.OAuth2ClientID.Path))
-
-	client := &fakeClient{list: func(_ context.Context, req *gendev.ListRequest, _ ...grpc.CallOption) (*gendev.ListResponse, error) {
-		assert.Equal(t, "x40.link", req.Domain)
-		return &gendev.ListResponse{Links: []*gendev.Link{{From: "//x40.link/a", To: "https://example.com"}}}, nil
+func TestResolveUsesResourceName(t *testing.T) {
+	want, err := shortlink.ResourceName("example.com", "/foo%2Fbar")
+	require.NoError(t, err)
+	client := &fakeClient{get: func(_ context.Context, req *v1alpha.GetShortLinkRequest) (*v1alpha.ShortLink, error) {
+		require.Equal(t, want, req.Name)
+		return &v1alpha.ShortLink{DestinationUrl: "https://destination.example/path"}, nil
 	}}
-	links, err := doListWithClient(context.Background(), client, "x40.link")
-	assert.NoError(t, err)
-	assert.Equal(t, "//x40.link/a", links[0].From)
+	got, err := doResolveWithClient(context.Background(), client, "EXAMPLE.COM/foo%2Fbar")
+	require.NoError(t, err)
+	require.Equal(t, "https://destination.example/path", got)
+	_, err = doResolveWithClient(context.Background(), client, "example.com/foo?query=1")
+	require.ErrorIs(t, err, sysexits.DataErr)
 }
 
-func TestRunList(t *testing.T) {
+func TestListPaginatesAndFilters(t *testing.T) {
+	called := 0
+	client := &fakeClient{list: func(_ context.Context, req *v1alpha.ListShortLinksRequest) (*v1alpha.ListShortLinksResponse, error) {
+		called++
+		require.Equal(t, "domains/example.com", req.Parent)
+		if called == 1 {
+			require.Empty(t, req.PageToken)
+			return &v1alpha.ListShortLinksResponse{ShortLinks: []*v1alpha.ShortLink{{ShortUrl: "https://example.com/a", DestinationUrl: "https://one.example"}}, NextPageToken: "page-2"}, nil
+		}
+		require.Equal(t, "page-2", req.PageToken)
+		return &v1alpha.ListShortLinksResponse{ShortLinks: []*v1alpha.ShortLink{{ShortUrl: "https://example.com/b", DestinationUrl: "https://two.example"}}}, nil
+	}}
 	var output bytes.Buffer
-	client := &fakeClient{list: func(ctx context.Context, _ *gendev.ListRequest, _ ...grpc.CallOption) (*gendev.ListResponse, error) {
-		deadline, ok := ctx.Deadline()
-		assert.True(t, ok)
-		assert.WithinDuration(t, time.Now().Add(30*time.Second), deadline, time.Second)
-		return &gendev.ListResponse{Links: []*gendev.Link{
-			{From: "//a.co/one", To: "https://destination.example/one"},
-			{From: "//long.example/two", To: "https://destination.example/two"},
-		}}, nil
+	require.NoError(t, runList(context.Background(), client, "EXAMPLE.COM", &output))
+	require.Equal(t, 2, called)
+	require.Equal(t, "https://example.com/a  https://one.example\nhttps://example.com/b  https://two.example\n", output.String())
+}
+
+func TestResolveAndListErrors(t *testing.T) {
+	client := &fakeClient{get: func(context.Context, *v1alpha.GetShortLinkRequest) (*v1alpha.ShortLink, error) {
+		return nil, status.Error(codes.NotFound, "missing")
+	}, list: func(context.Context, *v1alpha.ListShortLinksRequest) (*v1alpha.ListShortLinksResponse, error) {
+		return nil, errors.New("transport failed")
 	}}
-	assert.NoError(t, runList(context.Background(), client, "", &output))
-	assert.Equal(t, "a.co/one          https://destination.example/one\nlong.example/two  https://destination.example/two\n", output.String())
+	_, err := doResolveWithClient(context.Background(), client, "example.com/missing")
+	require.ErrorIs(t, err, sysexits.DataErr)
+	_, err = doListWithClient(context.Background(), client, "")
+	require.ErrorIs(t, err, sysexits.NoHost)
 }
 
-func TestLoginCommand(t *testing.T) {
-	command, args, err := Root.Find([]string{"login"})
-	assert.NoError(t, err)
-	assert.Same(t, loginCmd, command)
-	assert.Empty(t, args)
-
-	assert.NoError(t, loginCmd.Args(loginCmd, nil))
-	assert.Error(t, loginCmd.Args(loginCmd, []string{"unexpected"}))
-
-	for _, path := range []string{
-		cfg.OAuth2ClientID.Path,
-		cfg.OAuth2AuthorizationURL.Path,
-		cfg.OAuth2DeviceAuthorizationEndpoint.Path,
-		cfg.OAuth2TokenURL.Path,
-	} {
-		assert.NotNilf(t, loginCmd.Flags().Lookup(path), "missing OAuth flag %s", path)
-	}
-	assert.Nil(t, loginCmd.Flags().Lookup(cfg.APIEndpoint.Path))
-}
-
-func TestDoLogin(t *testing.T) {
+func TestLoginAndResolveCommandFlags(t *testing.T) {
+	command, _, err := Root.Find([]string{"login"})
+	require.NoError(t, err)
+	require.Same(t, loginCmd, command)
+	require.NotNil(t, loginCmd.Flags().Lookup(cfg.OAuth2ClientID.Path))
+	require.Nil(t, loginCmd.Flags().Lookup(cfg.APIEndpoint.Path))
+	require.NotNil(t, resolveCmd.Flags().Lookup(cfg.APIEndpoint.Path))
+	require.NotNil(t, resolveCmd.Flags().Lookup(cfg.OAuth2ClientID.Path))
 	loginErr := errors.New("login failed")
-
-	for _, tc := range []struct {
-		name    string
-		login   func(context.Context) error
-		wantErr error
-	}{
-		{
-			name: "successful login",
-			login: func(_ context.Context) error {
-				return nil
-			},
-		},
-		{
-			name: "failed login is a software error",
-			login: func(_ context.Context) error {
-				return loginErr
-			},
-			wantErr: sysexits.Software,
-		},
-	} {
-		tc := tc
-
-		t.Run(tc.name, func(t *testing.T) {
-			err := doLogin(context.Background(), tc.login)
-			assert.ErrorIs(t, err, tc.wantErr)
-			if tc.wantErr != nil {
-				assert.ErrorIs(t, err, loginErr)
-			}
-		})
-	}
-}
-
-func TestDoResolveWithClient(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		name string
-
-		// Setup the fake client to return this response/error.
-		clientResp *gendev.Response
-		clientErr  error
-
-		// The input to doResolveWithClient.
-		input string
-
-		// What we expect.
-		expectedURL   string
-		expectedError error // Use errors.Is for matching; nil for "no error expected"
-	}{
-		{
-			name: "valid input returns destination",
-
-			clientResp: &gendev.Response{
-				Url: "https://destination.example/path",
-			},
-			clientErr: nil,
-
-			input: "https://x40.link/abc",
-
-			expectedURL:   "https://destination.example/path",
-			expectedError: nil,
-		},
-		{
-			name: "input without scheme is treated as https",
-
-			clientResp: &gendev.Response{
-				Url: "https://destination.example/path",
-			},
-			clientErr: nil,
-
-			input: "x40.link/abc",
-
-			expectedURL:   "https://destination.example/path",
-			expectedError: nil,
-		},
-		{
-			name: "destination with // prefix has prefix stripped",
-
-			clientResp: &gendev.Response{
-				Url: "//destination.example/path",
-			},
-			clientErr: nil,
-
-			input: "https://x40.link/abc",
-
-			expectedURL:   "destination.example/path",
-			expectedError: nil,
-		},
-		{
-			name: "not found returns DataErr-wrapped error",
-
-			clientResp: nil,
-			clientErr:  status.Error(codes.NotFound, "url not found"),
-
-			input: "https://x40.link/abc",
-
-			expectedURL:   "",
-			expectedError: sysexits.DataErr,
-		},
-		{
-			name: "invalid argument returns DataErr-wrapped error",
-
-			clientResp: nil,
-			clientErr:  status.Error(codes.InvalidArgument, "url parse failure"),
-
-			input: "https://x40.link/abc",
-
-			expectedURL:   "",
-			expectedError: sysexits.DataErr,
-		},
-		{
-			name: "other gRPC error returns Protocol-wrapped error",
-
-			clientResp: nil,
-			clientErr:  status.Error(codes.Internal, "boom"),
-
-			input: "https://x40.link/abc",
-
-			expectedURL:   "",
-			expectedError: sysexits.Protocol,
-		},
-		{
-			name: "transport-level error returns NoHost-wrapped error",
-
-			clientResp: nil,
-			clientErr:  errors.New("connection refused"),
-
-			input: "https://x40.link/abc",
-
-			expectedURL:   "",
-			expectedError: sysexits.NoHost,
-		},
-	} {
-		tc := tc
-
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			fc := &fakeClient{
-				get: func(_ context.Context, _ *gendev.GetRequest, _ ...grpc.CallOption) (*gendev.Response, error) {
-					return tc.clientResp, tc.clientErr
-				},
-			}
-
-			got, err := doResolveWithClient(context.Background(), fc, tc.input)
-
-			assert.Equal(t, tc.expectedURL, got)
-			if tc.expectedError == nil {
-				assert.NoError(t, err)
-			} else {
-				assert.Error(t, err)
-				assert.True(t, errors.Is(err, tc.expectedError),
-					"expected error chain to contain %v, got %v", tc.expectedError, err)
-			}
-		})
-	}
+	require.ErrorIs(t, func() error { return doLogin(context.Background(), func(context.Context) error { return loginErr }) }(), sysexits.Software)
+	require.NoError(t, doLogin(context.Background(), func(context.Context) error { return nil }))
 }

@@ -29,9 +29,6 @@ jobs:
       - name: Install Task
         uses: arduino/setup-task@v1
 
-      - name: Install protobuf tools
-        run: task tools/go/install
-
       - name: Build and verify CLI release archives
         run: task release/cli/test
         env:

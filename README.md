@@ -36,8 +36,9 @@ The CLI binary supports four operations.
 ```
 
 The first form generates a random short URL on the default domain. The second generates a random path
-on a registered domain. The third lets you supply the short URL explicitly. This operation requires
-OAuth credentials.
+on a chosen source domain. The third lets you supply the short URL explicitly. This operation requires
+OAuth credentials and prints the full HTTPS short URL.
+Custom source domains need DNS routing to this service for redirects to work.
 
 On Firestore, creation claims an address atomically. Creating an existing
 address returns an error and preserves its destination. Escaped source paths
@@ -66,9 +67,9 @@ See [Change the CLI account](docs/content/how-to/change-cli-account.md) for the 
 @ resolve https://source.domain/path
 ```
 
-Prints the URL the short link redirects to. The destination of a short link is functionally public
-information (the HTTP redirect already discloses it to anonymous users), so this operation does
-not require authentication.
+Prints the URL the short link redirects to. This management lookup requires
+OAuth credentials. Following a short link through its public HTTP redirect
+remains available without authentication.
 
 **List links** (`@ list`):
 
@@ -78,11 +79,17 @@ not require authentication.
 ```
 
 Prints each short URL and destination in aligned columns. Authentication is
-required. Firestore lists links owned by the signed-in account; backends that
-do not store owners list all links. `--domain` filters by the short URL's
-domain. The current API returns all matching links in one response. Each
-Firestore list reads the matching documents again, so repeated lists consume
-read quota in proportion to the number of matching links.
+required. Results belong to the signed-in account; `--domain` filters by the
+short URL's domain. The CLI follows all pages of the v1alpha API response.
+Each page currently reads the owner's matching records again, so large lists
+consume read quota in proportion to the number of pages and matching links.
+
+The management API is defined in the separate
+[`x40-link/api`](https://github.com/x40-link/api) repository. This app serves
+the v1alpha `ShortLinkService` over gRPC and generated HTTP/JSON routes under
+`/v1alpha/`. The old `x40.dev.url.ManageURLs` RPCs and their scopes have been
+removed. Existing CLI tokens need fresh v1alpha scopes; run `@ login` after
+deploying the new Auth0 permissions.
 
 ## Understanding this work
 

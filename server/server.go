@@ -192,6 +192,18 @@ func WithStorage(str storage.Storer, name string) Option {
 	}
 }
 
+// WithGateway serves the canonical v1alpha HTTP/JSON bindings.
+func WithGateway(handler http.Handler) Option {
+	return func(srv *http.Server) error {
+		mux, err := serverMux(srv)
+		if err != nil {
+			return err
+		}
+		mux.Handle("/v1alpha/*", handler)
+		return nil
+	}
+}
+
 // WithH2C wraps the configured handler with an HTTP/2 cleartext server.
 //
 // The H2C handler deliberately sits outside chi. Installing it as chi

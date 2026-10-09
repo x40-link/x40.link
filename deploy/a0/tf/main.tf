@@ -33,18 +33,28 @@ resource "auth0_resource_server_scopes" "x40-api-scopes" {
   resource_server_identifier = auth0_resource_server.x40-api.identifier
 
   scopes {
-    name        = "api.x40.link/scopes/x40.dev.url.ManageURLs.Get"
-    description = "Access the RPC method x40.dev.url.ManageURLs.Get"
+    name        = "api.x40.link/scopes/x40.link.v1alpha.ShortLinkService.CreateShortLink"
+    description = "Create short links through the v1alpha API"
   }
 
   scopes {
-    name        = "api.x40.link/scopes/x40.dev.url.ManageURLs.New"
-    description = "Access the RPC method x40.dev.url.ManageURLs.New"
+    name        = "api.x40.link/scopes/x40.link.v1alpha.ShortLinkService.GetShortLink"
+    description = "Read owned short links through the v1alpha API"
   }
 
   scopes {
-    name        = "api.x40.link/scopes/x40.dev.url.ManageURLs.List"
-    description = "Access the RPC method x40.dev.url.ManageURLs.List"
+    name        = "api.x40.link/scopes/x40.link.v1alpha.ShortLinkService.ListShortLinks"
+    description = "List owned short links through the v1alpha API"
+  }
+
+  scopes {
+    name        = "api.x40.link/scopes/x40.link.v1alpha.ShortLinkService.UpdateShortLink"
+    description = "Update owned short links through the v1alpha API"
+  }
+
+  scopes {
+    name        = "api.x40.link/scopes/x40.link.v1alpha.ShortLinkService.DeleteShortLink"
+    description = "Delete owned short links through the v1alpha API"
   }
 }
 
@@ -98,17 +108,27 @@ resource "auth0_role_permissions" "api-user" {
   depends_on = [auth0_resource_server_scopes.x40-api-scopes]
 
   permissions {
-    name                       = "api.x40.link/scopes/x40.dev.url.ManageURLs.Get"
+    name                       = "api.x40.link/scopes/x40.link.v1alpha.ShortLinkService.CreateShortLink"
     resource_server_identifier = auth0_resource_server.x40-api.identifier
   }
 
   permissions {
-    name                       = "api.x40.link/scopes/x40.dev.url.ManageURLs.New"
+    name                       = "api.x40.link/scopes/x40.link.v1alpha.ShortLinkService.GetShortLink"
     resource_server_identifier = auth0_resource_server.x40-api.identifier
   }
 
   permissions {
-    name                       = "api.x40.link/scopes/x40.dev.url.ManageURLs.List"
+    name                       = "api.x40.link/scopes/x40.link.v1alpha.ShortLinkService.ListShortLinks"
+    resource_server_identifier = auth0_resource_server.x40-api.identifier
+  }
+
+  permissions {
+    name                       = "api.x40.link/scopes/x40.link.v1alpha.ShortLinkService.UpdateShortLink"
+    resource_server_identifier = auth0_resource_server.x40-api.identifier
+  }
+
+  permissions {
+    name                       = "api.x40.link/scopes/x40.link.v1alpha.ShortLinkService.DeleteShortLink"
     resource_server_identifier = auth0_resource_server.x40-api.identifier
   }
 }

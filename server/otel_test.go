@@ -160,11 +160,11 @@ func TestMethodNotAllowedSpan(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "/*", route.AsString())
 
-	method, ok := spanAttribute(rejected, "http.method")
+	method, ok := spanAttribute(rejected, "http.request.method")
 	require.True(t, ok)
 	assert.Equal(t, http.MethodPost, method.AsString())
 
-	status, ok := spanAttribute(rejected, "http.status_code")
+	status, ok := spanAttribute(rejected, "http.response.status_code")
 	require.True(t, ok)
 	assert.Equal(t, int64(http.StatusMethodNotAllowed), status.AsInt64())
 }

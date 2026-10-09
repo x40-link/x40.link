@@ -19,6 +19,7 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"github.com/andrewhowdencom/x40.link/server"
+	"github.com/andrewhowdencom/x40.link/shortlink"
 	"github.com/andrewhowdencom/x40.link/storage"
 	storer "github.com/andrewhowdencom/x40.link/storage/firestore"
 	"github.com/stretchr/testify/assert"
@@ -151,6 +152,93 @@ func TestComplianceExternalAll(t *testing.T) {
 			assert.Equal(t, &url.URL{
 				Host: "andrewhowden.com",
 			}, res)
+			managed, ok := str.(storage.ManagedStore)
+			if !ok {
+				t.Fatal("writable backend does not implement ManagedStore")
+			}
+			unownedName, err := shortlink.ResourceName("x40", "/")
+			require.NoError(t, err)
+			_, err = managed.GetManaged(context.Background(), unownedName, "alice")
+			require.ErrorIs(t, err, storage.ErrUnauthorized)
+			require.ErrorIs(t, managed.DeleteManaged(context.Background(), unownedName, "alice", ""), storage.ErrUnauthorized)
+			name, err := shortlink.ResourceName("example.com", "/foo%2Fbar")
+			require.NoError(t, err)
+			now := time.Now().UTC().Truncate(time.Second)
+			link := storage.ManagedLink{Name: name, Path: "/foo%2Fbar", DestinationURL: "https://destination.example/one", Owner: "alice", UID: "uid-1", ETag: "etag-1", CreateTime: now, UpdateTime: now}
+			created, err := managed.CreateManaged(context.Background(), link, "request-1", "fingerprint-1", now)
+			require.NoError(t, err)
+			require.Equal(t, link, created)
+			retried, err := managed.GetRequest(context.Background(), "alice", "request-1", "fingerprint-1", now.Add(time.Hour))
+			require.NoError(t, err)
+			require.Equal(t, link, retried)
+			_, err = managed.GetManaged(context.Background(), name, "bob")
+			require.ErrorIs(t, err, storage.ErrUnauthorized)
+			read, err := managed.GetManaged(context.Background(), name, "alice")
+			require.NoError(t, err)
+			require.Equal(t, link, read)
+			to, err := str.Get(context.Background(), &url.URL{Host: "EXAMPLE.COM", Path: "/foo/bar", RawPath: "/foo%2Fbar"})
+			require.NoError(t, err)
+			require.Equal(t, link.DestinationURL, to.String())
+			updated := link.Clone()
+			updated.DestinationURL = "https://destination.example/two"
+			updated.UpdateTime = now.Add(time.Minute)
+			updated.ETag = "etag-2"
+			_, err = managed.UpdateManaged(context.Background(), updated, link.ETag)
+			require.NoError(t, err)
+			links, err := managed.ListManaged(context.Background(), "alice", "example.com")
+			require.NoError(t, err)
+			require.Equal(t, []storage.ManagedLink{updated}, links)
+			require.ErrorIs(t, managed.DeleteManaged(context.Background(), name, "alice", link.ETag), storage.ErrAborted)
+			require.NoError(t, managed.DeleteManaged(context.Background(), name, "alice", updated.ETag))
+			_, err = str.Get(context.Background(), &url.URL{Host: "example.com", Path: "/foo/bar", RawPath: "/foo%2Fbar"})
+			require.ErrorIs(t, err, storage.ErrNotFound)
+			legacyCtx := context.WithValue(context.Background(), storage.CtxKeyAgent, "alice")
+			legacySource := &url.URL{Host: "example.com", Path: "/existing"}
+			require.NoError(t, str.Put(legacyCtx, legacySource, &url.URL{Scheme: "https", Host: "existing.example"}))
+			legacyName, err := shortlink.ResourceName("example.com", "/existing")
+			require.NoError(t, err)
+			legacyManaged, err := managed.GetManaged(context.Background(), legacyName, "alice")
+			require.NoError(t, err)
+			require.Equal(t, "https://existing.example", legacyManaged.DestinationURL)
+			require.NotEmpty(t, legacyManaged.UID)
+			require.NotEmpty(t, legacyManaged.ETag)
+			updatedLegacy := legacyManaged.Clone()
+			updatedLegacy.DestinationURL = "https://updated-existing.example"
+			updatedLegacy.UpdateTime = time.Now().UTC()
+			updatedLegacy.ETag = "updated-legacy-etag"
+			_, err = managed.UpdateManaged(context.Background(), updatedLegacy, legacyManaged.ETag)
+			require.NoError(t, err)
+			legacyRedirect, err := str.Get(context.Background(), legacySource)
+			require.NoError(t, err)
+			require.Equal(t, updatedLegacy.DestinationURL, legacyRedirect.String())
+			legacyClaim := link.Clone()
+			legacyClaim.Name, legacyClaim.Path = legacyName, "/existing"
+			_, err = managed.CreateManaged(context.Background(), legacyClaim, "", "", now)
+			require.ErrorIs(t, err, storage.ErrAlreadyExists)
+			_, err = managed.CreateManaged(context.Background(), link, "", "", now)
+			require.NoError(t, err)
+			concurrentName, err := shortlink.ResourceName("example.com", "/concurrent")
+			require.NoError(t, err)
+			concurrent := link.Clone()
+			concurrent.Name, concurrent.Path = concurrentName, "/concurrent"
+			const writers = 8
+			results := make(chan error, writers)
+			for i := 0; i < writers; i++ {
+				go func() {
+					_, err := managed.CreateManaged(context.Background(), concurrent, "", "", now)
+					results <- err
+				}()
+			}
+			successes := 0
+			for i := 0; i < writers; i++ {
+				err := <-results
+				if err == nil {
+					successes++
+				} else {
+					require.ErrorIs(t, err, storage.ErrAlreadyExists)
+				}
+			}
+			require.Equal(t, 1, successes)
 		})
 	}
 }

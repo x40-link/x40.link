@@ -1,4 +1,4 @@
-FROM docker.io/library/golang:1.25 AS build
+FROM docker.io/library/golang:1.26 AS build
 ARG GOARCH="amd64"
 
 ENV TASK_VERSION="v3.33.1"
@@ -22,7 +22,7 @@ WORKDIR /mnt
 COPY . /mnt
 
 # Build the binary
-RUN task tools/go/install bin
+RUN task bin
 
 # An imagine with SSL certificates (and some other Linux niceties)
 # See

@@ -168,9 +168,8 @@ func (o *ServerInterceptor) UnaryServerInterceptor(
 //
 // A method whose configured scope is the empty string is treated as publicly callable: the interceptor
 // skips the metadata and JWT checks and returns the context unchanged (with no agent attached).
-// This is used for methods whose response carries no sensitive information — for example, the gRPC
-// reflection API or a public lookup like x40.dev.url.ManageURLs.Get, whose result is already
-// disclosed to anonymous users by the HTTP redirect handler.
+// This is used for gRPC reflection. All v1alpha ShortLinkService methods
+// declare nonempty scopes and require an authenticated owner.
 func (o *ServerInterceptor) ValidateCtx(
 	ctx context.Context,
 	method string,

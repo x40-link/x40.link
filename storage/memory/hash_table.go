@@ -5,14 +5,17 @@ import (
 	"net/url"
 	"sync"
 
+	"github.com/andrewhowdencom/x40.link/shortlink"
 	"github.com/andrewhowdencom/x40.link/storage"
 )
 
 // HashTable stores the entire dataset within Go's implementation of a hash table (a map). It
 // has O(1) complexity, as it is always looking up something well known within a finite space.
 type HashTable struct {
-	table map[string]*url.URL
-	mu    sync.RWMutex
+	table    map[string]*url.URL
+	records  map[string]storage.ManagedLink
+	requests map[string]managedRequest
+	mu       sync.RWMutex
 }
 
 // NewHashTable initializes a new hash table, with the appropriate default values. It also exposes the hash
@@ -20,8 +23,10 @@ type HashTable struct {
 // and so on.
 func NewHashTable() *HashTable {
 	return &HashTable{
-		table: make(map[string]*url.URL),
-		mu:    sync.RWMutex{},
+		table:    make(map[string]*url.URL),
+		records:  make(map[string]storage.ManagedLink),
+		requests: make(map[string]managedRequest),
+		mu:       sync.RWMutex{},
 	}
 }
 
@@ -30,6 +35,18 @@ func NewHashTable() *HashTable {
 func (ht *HashTable) Get(_ context.Context, in *url.URL) (*url.URL, error) {
 	ht.mu.RLock()
 	defer ht.mu.RUnlock()
+
+	if in != nil {
+		path := in.EscapedPath()
+		if path == "" {
+			path = "/"
+		}
+		if name, err := shortlink.ResourceName(in.Hostname(), path); err == nil {
+			if link, ok := ht.records[name]; ok {
+				return url.Parse(link.DestinationURL)
+			}
+		}
+	}
 
 	if v, ok := ht.table[in.String()]; ok {
 		return v, nil

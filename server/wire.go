@@ -1,5 +1,3 @@
-//go:build wireinject
-
 package server
 
 import (
@@ -7,57 +5,58 @@ import (
 	"fmt"
 	"net/http"
 
-	apidi "github.com/andrewhowdencom/x40.link/api/di"
+	"github.com/andrewhowdencom/x40.link/api"
+	apiopts "github.com/andrewhowdencom/x40.link/api/di"
+	"github.com/andrewhowdencom/x40.link/api/management"
 	"github.com/andrewhowdencom/x40.link/cfg"
+	"github.com/andrewhowdencom/x40.link/storage"
 	strdi "github.com/andrewhowdencom/x40.link/storage/di"
-	"github.com/google/wire"
 )
 
-// ErrDependencyFailure just means there was a failure resolving a dependency
 var ErrDependencyFailure = errors.New("dependency failure")
 
-// ResolveOptions generates a server with the appropriate configuration, based on Viper and other
-// required dependencies
+// ResolveOptions constructs redirects and management over the same store.
+// This matters for the in-memory backend and avoids competing BoltDB locks.
 func ResolveOptions() ([]Option, error) {
 	opts := []Option{}
-
-	// OpenTelemetry middleware must be added before any routes are
-	// registered (chi requires middlewares to be defined before routes).
-	// When OTEL is disabled, WithOtel is a no-op as far as exporter
-	// traffic is concerned — the OTel SDK falls back to a no-op tracer.
 	if cfg.OTELEnabled.Value() {
 		opts = append(opts, WithOtel())
 	}
-
 	if addr := cfg.ServerListenAddress.Value(); addr != "" {
 		opts = append(opts, WithListenAddress(addr))
 	}
-
-	server, err := apidi.WireGRPCServer()
-	if err != nil && !errors.Is(err, cfg.ErrMissingOptions) {
-		return nil, ErrDependencyFailure
-	} else if err == nil {
-		opts = append(opts, WithGRPC(cfg.ServerAPIGRPCHost.Value(), server))
-	}
-
-	storage, name, err := strdi.WireStorage()
+	storer, name, err := strdi.WireStorage()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrDependencyFailure, err)
+		return nil, fmt.Errorf("%w: %v", ErrDependencyFailure, err)
 	}
-
-	opts = append(opts, WithStorage(storage, name))
-
-	// H2C wraps the completed request handler. Keep it last so the
-	// connection-level handler sits outside chi and each HTTP/2 stream
-	// receives an independent routing context.
+	grpcOpts, authorizer, err := apiopts.OptsFromViper()
+	if err != nil && !errors.Is(err, cfg.ErrMissingOptions) {
+		return nil, fmt.Errorf("%w: %v", ErrDependencyFailure, err)
+	}
+	if err == nil {
+		managed, ok := storer.(storage.ManagedStore)
+		if !ok {
+			return nil, fmt.Errorf("%w: selected storage does not support the management API", ErrDependencyFailure)
+		}
+		service := management.New(managed)
+		opts = append(opts, WithGRPC(cfg.ServerAPIGRPCHost.Value(), api.NewGRPCMuxWithService(service, grpcOpts...)))
+		gateway, err := api.NewGateway(service, authorizer.ValidateCtx)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrDependencyFailure, err)
+		}
+		opts = append(opts, WithGateway(gateway))
+	}
+	opts = append(opts, WithStorage(storer, name))
 	if cfg.ServerH2CEnabled.Value() {
 		opts = append(opts, WithH2C())
 	}
-
 	return opts, nil
 }
 
 func WireServer() (*http.Server, error) {
-	wire.Build(New, ResolveOptions)
-	return &http.Server{}, nil
+	opts, err := ResolveOptions()
+	if err != nil {
+		return nil, err
+	}
+	return New(opts...)
 }

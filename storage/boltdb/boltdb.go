@@ -3,11 +3,13 @@ package boltdb
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"time"
 
+	"github.com/andrewhowdencom/x40.link/shortlink"
 	"github.com/andrewhowdencom/x40.link/storage"
 	"go.etcd.io/bbolt"
 	"go.opentelemetry.io/otel"
@@ -98,6 +100,27 @@ func (b *BoltDB) Get(ctx context.Context, in *url.URL) (*url.URL, error) {
 	var u *url.URL
 
 	err := b.db.View(func(tx *bbolt.Tx) error {
+		path := in.EscapedPath()
+		if path == "" {
+			path = "/"
+		}
+		name, nameErr := shortlink.ResourceName(in.Hostname(), path)
+		if nameErr == nil {
+			if managed := tx.Bucket(managedBucketName); managed != nil {
+				if value := managed.Get([]byte(name)); value != nil {
+					var link storage.ManagedLink
+					if err := json.Unmarshal(value, &link); err != nil {
+						return storage.ErrCorrupt
+					}
+					var err error
+					u, err = url.Parse(link.DestinationURL)
+					if err != nil {
+						return storage.ErrCorrupt
+					}
+					return nil
+				}
+			}
+		}
 		// If there's no bucket created, no put operations can have been run. Ergo, the key cannot exist.
 		b := tx.Bucket(txBucketName)
 		if b == nil {

@@ -13,7 +13,6 @@ vars:
 tasks:
   release/cli:
     desc: "Build CLI release archives and SHA-256 checksums"
-    deps: ["protobuf/generate"]
     cmds:
       - |
         set -euo pipefail
@@ -86,8 +85,6 @@ tasks:
 
   bin:
     desc: "Build a go binary specific to an architecture and operating system"
-    deps:
-      - "protobuf/generate"
     requires:
       vars: [GOOS, GOARCH]
     cmds:
@@ -230,12 +227,6 @@ tasks:
     cmds:
       - "poetry run mkdocs serve"
 
-  protobuf/generate:
-    desc: "Generates the code required to interact with protobuf definitions"
-    cmds:
-      - cd api && buf generate
-
-
   tofu/plan:
     desc: "Plan the infrastructure changes, and validate their output"
     requires:
@@ -259,7 +250,19 @@ tasks:
       - hadolint Containerfile
 
       # Golang
+      - task: lint/go
+
+  lint/go:
+    desc: "Run Go linters"
+    cmds:
       - golangci-lint run ./...
+
+  validate:
+    desc: "Run the local Go test, lint, and build gates"
+    cmds:
+      - task: test
+      - task: lint/go
+      - go build ./...
 
   test:
     env:
@@ -274,10 +277,3 @@ tasks:
       # Required for unit tests
       - apt-get update
       - apt-get install google-cloud-sdk-firestore-emulator
-
-  tools/go/install:
-    desc: "Installs a series of go tools"
-    cmds:
-      - go install "github.com/bufbuild/buf/cmd/buf@v1.56.0"
-      - go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc"
-      - go install "google.golang.org/protobuf/cmd/protoc-gen-go"
