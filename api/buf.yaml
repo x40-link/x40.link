@@ -1,4 +1,0 @@
-version: v1
-name: buf.build/andrewhowdencom/x40
-deps:
-  - buf.build/googleapis/googleapis

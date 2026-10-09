@@ -89,15 +89,12 @@ jobs:
           registry: europe-west3-docker.pkg.dev
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: go.mod
 
       - name: Install Task
         uses: arduino/setup-task@v1
-
-      - name: "Install tools"
-        run: task tools/go/install
 
       - name: Build
         run: task container/all

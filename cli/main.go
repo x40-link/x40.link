@@ -13,13 +13,14 @@ import (
 
 	"github.com/andrewhowdencom/sysexits"
 	"github.com/andrewhowdencom/x40.link/api"
-	"github.com/andrewhowdencom/x40.link/api/gen/dev"
 	"github.com/andrewhowdencom/x40.link/cfg"
 	"github.com/andrewhowdencom/x40.link/cli/auth"
 	"github.com/andrewhowdencom/x40.link/cmd"
+	"github.com/andrewhowdencom/x40.link/shortlink"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	v1alpha "github.com/x40-link/api/gen/x40/link/v1alpha"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -91,23 +92,19 @@ var Root = &cobra.Command{
     @ https://source.domain/path https://my.destination.url/path
 
 Omit the source to use x40.link; omit its path to generate one.
-Custom source domains must be registered on x40.link.`,
+Custom source domains need DNS routing to this service for redirects to work.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: DoURL,
 }
 
-// resolveCmd is the "resolve" subcommand. It looks up the destination of a short
-// link and prints it to stdout. It is intentionally unauthenticated, since the
-// gRPC Get RPC it calls is publicly callable.
+// resolveCmd looks up a link through the authenticated management API.
 var resolveCmd = &cobra.Command{
 	Use:   "resolve",
 	Short: "Look up the destination of a short link",
 	Long: `Look up the destination of a short link.
 
 Given a short URL, print the URL it redirects to. The command does not
-require authentication; the destination of a short link is functionally
-public information, since the HTTP redirect already discloses it to
-anonymous users.
+require authentication. Anonymous users can still follow the HTTP redirect.
 
 Example:
 
@@ -140,8 +137,7 @@ var listCmd = &cobra.Command{
 	Short: "List links visible to your account",
 	Long: `List short links visible to your account.
 
-Filter by source domain with --domain. Firestore returns links owned by
-your account; storage backends without ownership data return all links.
+Filter by source domain with --domain. Results are scoped to your account.
 
 Examples:
 
@@ -175,19 +171,21 @@ func DoURL(_ *cobra.Command, args []string) error {
 	ctx, cxl := context.WithTimeout(context.Background(), time.Second*10)
 	defer cxl()
 
-	resp, err := client.New(ctx, req)
+	resp, err := client.CreateShortLink(ctx, req)
 
 	if err != nil {
 		return fmt.Errorf("%w: %s", sysexits.Protocol, err)
 	}
 
-	url, _ := strings.CutPrefix(resp.Url, "//")
-	fmt.Println(url)
+	fmt.Println(resp.ShortUrl)
 
 	return nil
 }
 
-func buildNewRequest(args []string) (*dev.NewRequest, error) {
+func buildNewRequest(args []string) (*v1alpha.CreateShortLinkRequest, error) {
+	if len(args) < 1 || len(args) > 2 {
+		return nil, fmt.Errorf("%w: expected destination and optional source", sysexits.Usage)
+	}
 	normalized := make([]string, len(args))
 	for i, arg := range args {
 		if !strings.Contains(arg, "://") {
@@ -195,13 +193,27 @@ func buildNewRequest(args []string) (*dev.NewRequest, error) {
 		}
 		normalized[i] = arg
 	}
-	req := &dev.NewRequest{SendTo: normalized[len(normalized)-1]}
+	req := &v1alpha.CreateShortLinkRequest{
+		Parent:    "domains/x40.link",
+		ShortLink: &v1alpha.ShortLink{DestinationUrl: normalized[len(normalized)-1]},
+	}
 	if len(normalized) == 2 {
 		u, err := url.Parse(normalized[0])
-		if err != nil {
-			return nil, err
+		if err != nil || u.User != nil || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" {
+			return nil, fmt.Errorf("%w: invalid source URL", sysexits.DataErr)
 		}
-		req.On = &dev.RedirectOn{Host: u.Host, Path: u.EscapedPath()}
+		domain, err := shortlink.CanonicalDomain(u.Hostname())
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", sysexits.DataErr, err)
+		}
+		req.Parent = "domains/" + domain
+		if u.EscapedPath() != "" {
+			path, err := shortlink.CanonicalPath(u.EscapedPath())
+			if err != nil {
+				return nil, fmt.Errorf("%w: %v", sysexits.DataErr, err)
+			}
+			req.ShortLink.Path = &path
+		}
 	}
 	return req, nil
 }
@@ -228,10 +240,14 @@ func doLogin(ctx context.Context, login func(context.Context) error) error {
 }
 
 // DoResolve is the cobra command handler for the "resolve" subcommand. It builds
-// a gRPC client (without per-RPC credentials, since the Get RPC is public) and
+// a gRPC client with per-RPC credentials and
 // delegates the actual call to doResolveWithClient for testability.
 func DoResolve(_ *cobra.Command, args []string) error {
-	client, err := api.NewGRPCClient(viper.GetString(cfg.APIEndpoint.Path))
+	ts, err := auth.TokenSource()
+	if err != nil {
+		return fmt.Errorf("%w: %v", sysexits.Software, err)
+	}
+	client, err := api.NewGRPCClient(viper.GetString(cfg.APIEndpoint.Path), grpc.WithPerRPCCredentials(auth.NewPerRPCCredentials(ts)))
 	if err != nil {
 		return fmt.Errorf("%w: %s", sysexits.NoHost, err)
 	}
@@ -277,9 +293,7 @@ func runList(ctx context.Context, client api.Client, domain string, out io.Write
 	}
 	writer := tabwriter.NewWriter(out, 0, 8, 2, ' ', 0)
 	for _, link := range links {
-		source, _ := strings.CutPrefix(link.From, "//")
-		destination, _ := strings.CutPrefix(link.To, "//")
-		if _, err := fmt.Fprintf(writer, "%s\t%s\n", source, destination); err != nil {
+		if _, err := fmt.Fprintf(writer, "%s\t%s\n", link.ShortUrl, link.DestinationUrl); err != nil {
 			return fmt.Errorf("%w: %s", sysexits.Software, err)
 		}
 	}
@@ -289,12 +303,33 @@ func runList(ctx context.Context, client api.Client, domain string, out io.Write
 	return nil
 }
 
-func doListWithClient(ctx context.Context, client api.Client, domain string) ([]*dev.Link, error) {
-	response, err := client.List(ctx, &dev.ListRequest{Domain: domain})
-	if err != nil {
-		return nil, classifyResolveError(err)
+func doListWithClient(ctx context.Context, client api.Client, domain string) ([]*v1alpha.ShortLink, error) {
+	parent := "domains/-"
+	if domain != "" {
+		canonical, err := shortlink.CanonicalDomain(domain)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", sysexits.DataErr, err)
+		}
+		parent = "domains/" + canonical
 	}
-	return response.Links, nil
+	links := []*v1alpha.ShortLink{}
+	token := ""
+	seen := map[string]bool{}
+	for {
+		response, err := client.ListShortLinks(ctx, &v1alpha.ListShortLinksRequest{Parent: parent, PageToken: token})
+		if err != nil {
+			return nil, classifyResolveError(err)
+		}
+		links = append(links, response.ShortLinks...)
+		if response.NextPageToken == "" {
+			return links, nil
+		}
+		if seen[response.NextPageToken] {
+			return nil, fmt.Errorf("%w: repeated list page token", sysexits.Protocol)
+		}
+		seen[response.NextPageToken] = true
+		token = response.NextPageToken
+	}
 }
 
 // doResolveWithClient is the testable core of the resolve flow. It takes a
@@ -309,15 +344,24 @@ func doResolveWithClient(ctx context.Context, client api.Client, input string) (
 		input = "https://" + input
 	}
 
-	resp, err := client.Get(ctx, &dev.GetRequest{Url: input})
+	u, err := url.Parse(input)
+	if err != nil || u.User != nil || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("%w: invalid short URL", sysexits.DataErr)
+	}
+	path := u.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	name, err := shortlink.ResourceName(u.Hostname(), path)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", sysexits.DataErr, err)
+	}
+	resp, err := client.GetShortLink(ctx, &v1alpha.GetShortLinkRequest{Name: name})
 	if err != nil {
 		return "", classifyResolveError(err)
 	}
 
-	// Strip a leading "//" from the response to match the DoURL convention.
-	destination, _ := strings.CutPrefix(resp.Url, "//")
-
-	return destination, nil
+	return resp.DestinationUrl, nil
 }
 
 // classifyResolveError maps a gRPC error from the Get call to a sysexits code.
@@ -343,7 +387,7 @@ func init() {
 	Root.Flags().AddFlagSet(urlFlagSet)
 	Root.AddCommand(loginCmd, resolveCmd, listCmd)
 	loginCmd.Flags().AddFlagSet(authFlagSet)
-	resolveCmd.Flags().AddFlagSet(apiFlagSet)
+	resolveCmd.Flags().AddFlagSet(urlFlagSet)
 	listCmd.Flags().AddFlagSet(urlFlagSet)
 	listCmd.Flags().String("domain", "", "restrict results to this source domain")
 }

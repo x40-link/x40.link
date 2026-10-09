@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/firestore"
+	"github.com/andrewhowdencom/x40.link/shortlink"
 	"github.com/andrewhowdencom/x40.link/storage"
 	"go.opentelemetry.io/otel/attribute"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -81,6 +82,21 @@ func (fs Firestore) Put(ctx context.Context, from, to *url.URL) error {
 	})
 	if errors.Is(err, storage.ErrAlreadyExists) || errors.Is(err, storage.ErrUnauthorized) || errors.Is(err, storage.ErrCorrupt) {
 		return err
+	}
+	// The emulator can abort a losing concurrent create after exhausting
+	// transaction retries. The committed winner still defines the correct
+	// result for this caller, so classify it from the current document.
+	if status.Code(err) == codes.Aborted {
+		if snap, readErr := ref.Get(ctx); readErr == nil {
+			var existing document
+			if decodeErr := snap.DataTo(&existing); decodeErr != nil {
+				return storage.ErrCorrupt
+			}
+			if existing.Owner != agent {
+				return storage.ErrUnauthorized
+			}
+			return storage.ErrAlreadyExists
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("%w: %s", storage.ErrFailed, err)
@@ -186,7 +202,11 @@ func canonicalSource(u *url.URL) *url.URL {
 	}
 	p = string(b)
 	decoded, _ := url.PathUnescape(p) // EscapedPath always returns valid escaping.
-	return &url.URL{Host: strings.ToLower(u.Host), Path: decoded, RawPath: p}
+	domain, err := shortlink.CanonicalDomain(u.Hostname())
+	if err != nil {
+		domain = strings.ToLower(u.Hostname())
+	}
+	return &url.URL{Host: domain, Path: decoded, RawPath: p}
 }
 
 func upperHex(b byte) byte {
@@ -197,7 +217,10 @@ func upperHex(b byte) byte {
 }
 
 func (fs Firestore) sourceRef(u *url.URL) (*firestore.DocumentRef, error) {
-	if u == nil || u.Host == "" || strings.Contains(u.Host, "/") {
+	if u == nil {
+		return nil, storage.ErrInvalidSource
+	}
+	if _, err := shortlink.CanonicalDomain(u.Hostname()); err != nil {
 		return nil, storage.ErrInvalidSource
 	}
 	p := urlToPath(u)

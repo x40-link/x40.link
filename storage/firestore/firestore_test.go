@@ -58,6 +58,7 @@ func TestURLToPathEncodingAndLimit(t *testing.T) {
 func TestURLToPathCanonical(t *testing.T) {
 	tests := []struct{ left, right string }{
 		{"http://EXAMPLE.com/foo", "https://example.com/foo"},
+		{"http://EXAMPLE.com:8443/foo", "https://example.com/foo"},
 		{"https://example.com/foo%2fbar", "https://example.com/foo%2Fbar"},
 		{"https://example.com", "https://example.com/"},
 		{"https://example.com/foo?a=1", "https://example.com/foo?a=2"},

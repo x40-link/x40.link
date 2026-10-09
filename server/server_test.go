@@ -2,9 +2,7 @@ package server_test
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,7 +14,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/net/http2"
 )
 
 func TestNewServer_WithBadOption(t *testing.T) {
@@ -110,6 +107,23 @@ func TestNewServer_WithStorage(t *testing.T) {
 	assert.Equal(t, "//test/bar", w.Header().Get("Location"))
 }
 
+func TestGatewayRoutePrecedesRedirect(t *testing.T) {
+	store := test.New()
+	srv, err := server.New(
+		server.WithGateway(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/v1alpha/domains/example.com/shortLinks", r.URL.Path)
+			w.WriteHeader(http.StatusAccepted)
+		})),
+		server.WithStorage(store, "hashmap"),
+	)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodGet, "/v1alpha/domains/example.com/shortLinks", nil)
+	req.Host = "example.com"
+	response := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(response, req)
+	require.Equal(t, http.StatusAccepted, response.Code)
+}
+
 func TestNewServer_WithH2CConcurrentRequests(t *testing.T) {
 	rec := withSpanRecorder(t)
 
@@ -134,12 +148,9 @@ func TestNewServer_WithH2CConcurrentRequests(t *testing.T) {
 	ts.Start()
 	t.Cleanup(ts.Close)
 
-	transport := &http2.Transport{
-		AllowHTTP: true,
-		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, network, addr)
-		},
-	}
+	protocols := new(http.Protocols)
+	protocols.SetUnencryptedHTTP2(true)
+	transport := &http.Transport{Protocols: protocols}
 	t.Cleanup(transport.CloseIdleConnections)
 
 	client := &http.Client{
@@ -213,7 +224,7 @@ func TestNewServer_WithH2CConcurrentRequests(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, "/*", route.AsString())
 
-		protocol, ok := spanAttribute(span, "net.protocol.version")
+		protocol, ok := spanAttribute(span, "network.protocol.version")
 		require.True(t, ok)
 		assert.Equal(t, "2.0", protocol.AsString())
 
