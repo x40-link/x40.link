@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/andrewhowdencom/x40.link/api/auth/tokens/seeds"
 	"github.com/andrewhowdencom/x40.link/api/auth/tokens/storage"
@@ -71,6 +72,7 @@ func NewCachingSource(
 		}
 
 		if !tok.Valid() && tok.RefreshToken == "" {
+			slog.Warn("cached login expired without a refresh token; starting device login")
 			needsSeed = true
 		}
 	}

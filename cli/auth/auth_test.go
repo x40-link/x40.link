@@ -7,11 +7,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andrewhowdencom/x40.link/api"
 	"github.com/andrewhowdencom/x40.link/api/auth/tokens/seeds"
 	"github.com/andrewhowdencom/x40.link/api/auth/tokens/storage"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/oauth2"
 )
+
+func TestOAuthConfigRequestsOfflineAccess(t *testing.T) {
+	scopes := oauthConfig().Scopes
+	assert.ElementsMatch(t, append(api.X40PermissionsList(), "offline_access"), scopes)
+}
 
 func TestLogin(t *testing.T) {
 	t.Parallel()

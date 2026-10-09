@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"golang.org/x/oauth2"
 )
@@ -41,6 +42,9 @@ func DeviceAuth(audience string, c *oauth2.Config) Seed {
 
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", ErrFailedToExchange, err)
+		}
+		if tok.RefreshToken == "" {
+			slog.Warn("login provider did not issue a refresh token; login will be required again after the access token expires")
 		}
 
 		return tok, nil
