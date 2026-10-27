@@ -37,3 +37,31 @@ The changes need to be deployed in two steps:
 
 If an apply only partly succeeds, create a new plan before retrying. The
 previous saved plan no longer describes the current infrastructure state.
+
+## Activate shp7.link
+
+The production configuration adds a `shp7-link` Cloud DNS zone, an apex A
+record pointing to the shared load balancer, and a dedicated managed TLS
+certificate attached to the existing HTTPS proxy. It covers `shp7.link`;
+`www.shp7.link` is not configured.
+
+1. Plan and apply the `prod` environment using the steps above.
+2. Retrieve the nameservers assigned to the new zone:
+
+    ```bash
+    gcloud dns managed-zones describe shp7-link \
+      --project=andrewhowdencom --format='value(nameServers)'
+    ```
+
+3. Set those nameservers at the domain registrar for `shp7.link`.
+   Registrar delegation is managed outside this Terraform configuration.
+4. Wait for DNS propagation and for the certificate to become `ACTIVE`:
+
+    ```bash
+    gcloud compute ssl-certificates describe shp7-link \
+      --project=andrewhowdencom --global --format='value(managed.status)'
+    ```
+
+5. Create a short link on `shp7.link` and open its HTTPS URL to verify the
+   redirect. The domain root only redirects if a link has been created for
+   that path.
