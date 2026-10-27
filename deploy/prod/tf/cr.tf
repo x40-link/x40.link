@@ -32,6 +32,12 @@ resource "google_dns_managed_zone" "x5e-link" {
   description = "A short domain for 0x5e"
 }
 
+resource "google_dns_managed_zone" "shp7-link" {
+  name        = "shp7-link"
+  dns_name    = "shp7.link."
+  description = "A short domain for shp7"
+}
+
 resource "google_dns_record_set" "x40-dev__ALIAS" {
   managed_zone = google_dns_managed_zone.x40-dev.name
   name         = google_dns_managed_zone.x40-dev.dns_name
@@ -99,6 +105,18 @@ resource "google_dns_record_set" "x5e-link" {
   ]
 }
 
+resource "google_dns_record_set" "shp7-link" {
+  for_each     = toset(var.shp7_link_domains)
+  name         = "${each.value}."
+  managed_zone = google_dns_managed_zone.shp7-link.name
+  ttl          = 300
+  type         = "A"
+
+  rrdatas = [
+    google_compute_global_address.x40-link.address
+  ]
+}
+
 # Setup network path to access the service
 resource "google_compute_global_address" "x40-link" {
   name = "x40-link"
@@ -117,6 +135,14 @@ resource "google_compute_managed_ssl_certificate" "x5e-link" {
 
   managed {
     domains = var.x5e_link_domains
+  }
+}
+
+resource "google_compute_managed_ssl_certificate" "shp7-link" {
+  name = "shp7-link"
+
+  managed {
+    domains = var.shp7_link_domains
   }
 }
 
@@ -151,7 +177,8 @@ resource "google_compute_target_https_proxy" "x40-link" {
 
   ssl_certificates = [
     google_compute_managed_ssl_certificate.all-link-shorteners-v4.id,
-    google_compute_managed_ssl_certificate.x5e-link.id
+    google_compute_managed_ssl_certificate.x5e-link.id,
+    google_compute_managed_ssl_certificate.shp7-link.id
   ]
 }
 

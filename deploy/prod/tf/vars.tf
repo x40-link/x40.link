@@ -18,6 +18,11 @@ variable "x5e_link_domains" {
   default = ["0x5e.link"]
 }
 
+variable "shp7_link_domains" {
+  type    = list(string)
+  default = ["shp7.link"]
+}
+
 variable "cloud-run__x40-link" {
   type    = string
   default = "x40-link"

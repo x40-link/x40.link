@@ -49,6 +49,23 @@ step to fail with `iam.serviceAccounts.getAccessToken` permission denied.
 `ghcr.io/x40-link/x40.link`. The GitHub registry namespace must match the
 repository owner so the workflow's `GITHUB_TOKEN` can publish the image.
 
+## Infrastructure Tests
+
+Run the production DNS and TLS wiring test with OpenTofu 1.9 or newer:
+
+```bash
+cd deploy/prod/tf
+tofu init -backend=false
+tofu fmt -check -recursive
+tofu validate
+tofu test
+```
+
+The test uses a mocked Google provider and targets the short-link DNS and
+HTTPS proxy resources. It needs no cloud credentials and creates no cloud
+resources. Run a full production plan separately before deployment; the
+mocked test does not check live infrastructure state.
+
 ## CLI Subcommands
 
 The CLI binary lives in `cli/`. It exposes four operations:

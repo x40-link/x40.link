@@ -137,7 +137,7 @@ You can check the infrastructure by visiting the managed domains with:
 
 * **docs**: https://x40.dev
 * **app**: https://x40.link
-* **short links**: https://0x5e.link
+* **short links**: https://0x5e.link, https://shp7.link
 
 **🤖 Task Runner**
 
